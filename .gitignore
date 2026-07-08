@@ -1,0 +1,55 @@
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Dependencies
+.venv/
+venv/
+env/
+pip-log.txt
+pip-selfcheck.json
+
+# Build and distribution artifacts
+build/
+dist/
+*.egg
+*.egg-info/
+*.so
+
+# Logs
+*.log
+
+# Environment variables
+.env
+.env.local
+*.env.*
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Testing
+.coverage
+htmlcov/
+.coverage.*
+.tox/
+nosetests.xml
+
+# Documentation
+docs/_build/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+```
