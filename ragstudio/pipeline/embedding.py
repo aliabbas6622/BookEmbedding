@@ -3,7 +3,7 @@ Embedding stage - generates embeddings for text chunks
 """
 from typing import Dict, Any, Optional, List
 
-from src.pipeline.base import PipelineStage, PipelineContext
+from ragstudio.pipeline.base import PipelineStage, PipelineContext
 
 
 class EmbeddingStage(PipelineStage):

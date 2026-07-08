@@ -3,7 +3,7 @@ OCR extraction stage - extracts text from PDF documents
 """
 from typing import Dict, Any, Optional
 
-from src.pipeline.base import PipelineStage, PipelineContext
+from ragstudio.pipeline.base import PipelineStage, PipelineContext
 
 
 class OCRExtractionStage(PipelineStage):
