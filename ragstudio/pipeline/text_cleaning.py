@@ -4,7 +4,7 @@ Text cleaning stage - cleans and normalizes extracted text
 import re
 from typing import Dict, Any, Optional
 
-from src.pipeline.base import PipelineStage, PipelineContext
+from ragstudio.pipeline.base import PipelineStage, PipelineContext
 
 
 class TextCleaningStage(PipelineStage):

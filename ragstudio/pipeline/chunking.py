@@ -3,7 +3,7 @@ Chunking stage - splits text into chunks for embedding
 """
 from typing import Dict, Any, Optional, List
 
-from src.pipeline.base import PipelineStage, PipelineContext
+from ragstudio.pipeline.base import PipelineStage, PipelineContext
 
 
 class ChunkingStage(PipelineStage):

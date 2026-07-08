@@ -3,7 +3,7 @@ Vector index stage - stores embeddings in vector index
 """
 from typing import Dict, Any, Optional, List
 
-from src.pipeline.base import PipelineStage, PipelineContext
+from ragstudio.pipeline.base import PipelineStage, PipelineContext
 
 
 class VectorIndexStage(PipelineStage):

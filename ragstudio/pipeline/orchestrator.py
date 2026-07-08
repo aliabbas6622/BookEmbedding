@@ -28,6 +28,7 @@ class PipelineOrchestrator:
         return [
             "upload_validation",
             "ocr_extraction",
+            "llm_correction",  # Optional stage for OCR correction
             "text_cleaning",
             "chunking",
             "embedding",
