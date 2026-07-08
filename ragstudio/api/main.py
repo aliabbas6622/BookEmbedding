@@ -7,16 +7,16 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import uvicorn
 
-from config.settings import (
+from ragstudio.core.config.settings import (
     API_HOST, API_PORT, UPLOAD_DIR, OUTPUT_DIR, 
     DEFAULT_OCR_PROVIDER, DEFAULT_LLM_PROVIDER,
     DEFAULT_EMBEDDING_PROVIDER, DEFAULT_VECTOR_INDEX_PROVIDER,
     DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
 )
-from src.db.database import Database
-from src.pipeline.orchestrator import PipelineOrchestrator
-from src.api.settings_routes import router as settings_router
-from src.api.rag_playground import router as rag_router
+from ragstudio.core.database.database import Database
+from ragstudio.pipeline.orchestrator import PipelineOrchestrator
+from ragstudio.api.settings_routes import router as settings_router
+from ragstudio.api.rag_playground import router as rag_router
 
 # Initialize FastAPI app
 app = FastAPI(

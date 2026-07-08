@@ -4,7 +4,7 @@ Upload validation stage - validates uploaded documents
 from pathlib import Path
 from typing import Dict, Any, Optional
 
-from src.pipeline.base import PipelineStage, PipelineContext
+from ragstudio.pipeline.base import PipelineStage, PipelineContext
 
 
 class UploadValidationStage(PipelineStage):
@@ -17,7 +17,7 @@ class UploadValidationStage(PipelineStage):
     
     async def execute(self, context: PipelineContext) -> PipelineContext:
         """Execute upload validation"""
-        from config.settings import UPLOAD_DIR
+        from ragstudio.core.config.settings import UPLOAD_DIR
         
         document_id = context.document_id
         

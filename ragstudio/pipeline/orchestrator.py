@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import Dict, Any, Optional, List
 from datetime import datetime
 
-from src.pipeline.base import PipelineContext, PipelineStage, StageResult
-from src.db.database import Database
+from ragstudio.pipeline.base import PipelineContext, PipelineStage, StageResult
+from ragstudio.core.database.database import Database
 
 
 class PipelineOrchestrator:
@@ -236,7 +236,7 @@ class PipelineOrchestrator:
     
     def save_checkpoint(self, pipeline_id: str, context: PipelineContext):
         """Save pipeline checkpoint for resumption"""
-        from config.settings import PIPELINE_STATUS_DIR
+        from ragstudio.core.config.settings import PIPELINE_STATUS_DIR
         
         checkpoint_file = PIPELINE_STATUS_DIR / f"{pipeline_id}.json"
         
@@ -252,7 +252,7 @@ class PipelineOrchestrator:
     
     def load_checkpoint(self, pipeline_id: str) -> Optional[Dict[str, Any]]:
         """Load pipeline checkpoint"""
-        from config.settings import PIPELINE_STATUS_DIR
+        from ragstudio.core.config.settings import PIPELINE_STATUS_DIR
         
         checkpoint_file = PIPELINE_STATUS_DIR / f"{pipeline_id}.json"
         
