@@ -1,17 +1,28 @@
 """
 RAG Studio API - FastAPI based REST API
+Security hardened version with authentication, rate limiting, and input validation
 """
-from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Query
+import os
+import re
+import magic
+from pathlib import Path
+from fastapi import FastAPI, HTTPException, UploadFile, File, BackgroundTasks, Query, Depends, Request, status
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from slowapi import SlowAPI, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 import uvicorn
+import jwt
+from datetime import datetime, timedelta
 
 from ragstudio.core.config.settings import (
     API_HOST, API_PORT, UPLOAD_DIR, OUTPUT_DIR, 
     DEFAULT_OCR_PROVIDER, DEFAULT_LLM_PROVIDER,
     DEFAULT_EMBEDDING_PROVIDER, DEFAULT_VECTOR_INDEX_PROVIDER,
-    DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP
+    DEFAULT_CHUNK_SIZE, DEFAULT_CHUNK_OVERLAP, SECRET_KEY, ALGORITHM
 )
 from ragstudio.core.database.database import Database
 from ragstudio.pipeline.orchestrator import PipelineOrchestrator
@@ -22,17 +33,33 @@ from ragstudio.api.rag_playground import router as rag_router
 app = FastAPI(
     title="RAG Studio API",
     description="Document ingestion and RAG pipeline API",
-    version="1.0.0"
+    version="2.5.0-security-hardened"
 )
 
-# CORS middleware
+# Security configuration
+ALLOWED_ORIGINS = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://localhost:8000").split(",")
+SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+ALGORITHM = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "30"))
+
+# Rate limiter
+slowapi = SlowAPI()
+app.state.limiter = slowapi
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+
+# CORS middleware - Restricted to specific origins
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "PATCH"],
+    allow_headers=["Authorization", "Content-Type"],
+    expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining"],
+    max_age=600,
 )
+
+# Security scheme for authentication
+security = HTTPBearer(auto_error=False)
 
 # Include routers
 app.include_router(settings_router)
@@ -40,6 +67,79 @@ app.include_router(rag_router)
 
 # Initialize database
 db = Database()
+
+# ============================================
+# Security Helper Functions
+# ============================================
+
+def secure_filename(filename: str) -> str:
+    """Sanitize filename to prevent path traversal attacks"""
+    # Remove any directory components
+    filename = Path(filename).name
+    # Replace unsafe characters
+    filename = re.sub(r'[^\w\.\-]', '_', filename)
+    # Remove hidden file prefixes
+    filename = filename.lstrip('.')
+    # Limit length
+    if len(filename) > 255:
+        name, ext = os.path.splitext(filename)
+        filename = name[:255-len(ext)] + ext
+    return filename
+
+def validate_file_magic(content: bytes, allowed_mime_types: List[str]) -> bool:
+    """Validate file type using magic bytes instead of just extension"""
+    try:
+        mime = magic.from_buffer(content, mime=True)
+        return mime in allowed_mime_types
+    except Exception:
+        return False
+
+async def get_current_user(
+    credentials: HTTPAuthorizationCredentials = Depends(security)
+) -> Optional[Dict[str, Any]]:
+    """Extract and validate JWT token from request"""
+    if not credentials:
+        return None
+    
+    try:
+        token = credentials.credentials
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        return {
+            "user_id": payload.get("sub"),
+            "username": payload.get("username"),
+            "exp": payload.get("exp")
+        }
+    except jwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Token has expired"
+        )
+    except jwt.InvalidTokenError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token"
+        )
+
+def require_auth(user: Optional[Dict] = Depends(get_current_user)) -> Dict:
+    """Dependency to require authentication"""
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required"
+        )
+    return user
+
+def mask_sensitive_data(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Mask sensitive data in logs and responses"""
+    sensitive_keys = ['api_key', 'password', 'secret', 'token', 'credential']
+    masked = data.copy()
+    for key in masked.keys():
+        if any(s in key.lower() for s in sensitive_keys):
+            if isinstance(masked[key], str) and len(masked[key]) > 4:
+                masked[key] = masked[key][:2] + '*' * (len(masked[key]) - 4) + masked[key][-2:]
+            else:
+                masked[key] = '***'
+    return masked
 
 # ============================================
 # Pydantic Models for API Requests/Responses
@@ -256,38 +356,67 @@ async def get_provider_details(provider_type: str):
     }
 
 @app.post("/api/v1/documents/upload", response_model=DocumentUploadResponse)
+@slowapi.limit("10/minute")  # Rate limit: 10 uploads per minute
 async def upload_document(
     file: UploadFile = File(..., description="PDF file to upload"),
-    background_tasks: BackgroundTasks = None
+    background_tasks: BackgroundTasks = None,
+    current_user: Dict = Depends(require_auth)  # Require authentication
 ):
-    """Upload a document for processing"""
+    """Upload a document for processing with security validation"""
+    # Sanitize filename to prevent path traversal
+    safe_filename = secure_filename(file.filename)
+    if not safe_filename:
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
     # Validate file extension
-    if not file.filename.lower().endswith('.pdf'):
+    if not safe_filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed")
     
-    # Save uploaded file
-    file_path = UPLOAD_DIR / file.filename
+    # Read file content
     try:
+        content = await file.read()
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to read file: {str(e)}")
+    
+    # Validate file size (max 100MB)
+    max_file_size = 100 * 1024 * 1024  # 100MB
+    if len(content) > max_file_size:
+        raise HTTPException(status_code=400, detail="File too large (max 100MB)")
+    
+    # Validate file type using magic bytes
+    allowed_mime_types = ['application/pdf']
+    if not validate_file_magic(content, allowed_mime_types):
+        raise HTTPException(status_code=400, detail="Invalid file type. Only PDF files are allowed.")
+    
+    # Create safe file path
+    file_path = UPLOAD_DIR / safe_filename
+    
+    try:
+        # Save uploaded file with restricted permissions
         with open(file_path, "wb") as f:
-            content = await file.read()
             f.write(content)
+        os.chmod(file_path, 0o640)  # Owner read/write, group read
         
         # Register document in database
         doc_id = db.insert_document(
-            filename=file.filename,
+            filename=safe_filename,
             file_path=str(file_path),
             file_size=len(content),
-            status="uploaded"
+            status="uploaded",
+            user_id=current_user.get("user_id")  # Associate with authenticated user
         )
         
         return DocumentUploadResponse(
             document_id=doc_id,
-            filename=file.filename,
+            filename=safe_filename,
             status="uploaded",
             message="Document uploaded successfully"
         )
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to upload file: {str(e)}")
+        # Log error without exposing internal details
+        import logging
+        logging.error(f"Upload failed for user {current_user.get('user_id')}: {str(e)}")
+        raise HTTPException(status_code=500, detail="Failed to upload file")
 
 @app.post("/api/v1/pipeline/start")
 async def start_pipeline(

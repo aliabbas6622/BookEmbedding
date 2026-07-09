@@ -422,18 +422,27 @@ class Database:
         
         params.append(pipeline_id)
         
+        # Build parameterized UPDATE query safely
+        if not updates:
+            return True  # Nothing to update
+        
+        set_clause = ', '.join(updates)
         query = f'''
             UPDATE pipeline_sessions 
-            SET {', '.join(updates)}
+            SET {set_clause}
             WHERE id = ?
         '''
         
-        cursor.execute(query, params)
-        affected = cursor.rowcount
-        conn.commit()
-        conn.close()
-        
-        return affected > 0
+        try:
+            cursor.execute(query, params)
+            affected = cursor.rowcount
+            conn.commit()
+            return affected > 0
+        except sqlite3.Error as e:
+            conn.rollback()
+            raise Exception(f"Database update failed: {str(e)}")
+        finally:
+            conn.close()
     
     def list_pipeline_sessions(
         self,

@@ -1,12 +1,20 @@
 """
 RAG Studio Settings API - Full customization for all providers
+Security: API keys must be loaded from environment variables, never hardcoded
 """
-from fastapi import APIRouter, HTTPException, Query
+import os
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel, Field, validator
 from typing import Optional, List, Dict, Any, Literal
 import json
 
 router = APIRouter(prefix="/api/v1/settings", tags=["Settings"])
+
+# Helper function to get API keys from environment
+def get_env_api_key(provider: str, default: str = "") -> str:
+    """Get API key from environment variable securely"""
+    env_var_name = f"{provider.upper()}_API_KEY"
+    return os.getenv(env_var_name, default)
 
 # ============================================
 # Pydantic Models for Provider Configurations
@@ -50,7 +58,7 @@ class LLMProviderConfig(BaseModel):
             "num_ctx": 4096
         },
         "openai": {
-            "api_key": "",
+            "api_key": "",  # Must be set via OPENAI_API_KEY environment variable
             "base_url": "https://api.openai.com/v1",
             "model": "gpt-4o-mini",
             "temperature": 0.7,
@@ -58,14 +66,14 @@ class LLMProviderConfig(BaseModel):
             "timeout": 60
         },
         "gemini": {
-            "api_key": "",
+            "api_key": "",  # Must be set via GEMINI_API_KEY environment variable
             "model": "gemini-1.5-flash",
             "temperature": 0.7,
             "max_output_tokens": 2048,
             "timeout": 60
         },
         "anthropic": {
-            "api_key": "",
+            "api_key": "",  # Must be set via ANTHROPIC_API_KEY environment variable
             "base_url": "https://api.anthropic.com",
             "model": "claude-3-5-sonnet-20241022",
             "temperature": 0.7,
@@ -87,21 +95,21 @@ class EmbeddingProviderConfig(BaseModel):
             "batch_size": 32
         },
         "openai": {
-            "api_key": "",
+            "api_key": "",  # Must be set via OPENAI_API_KEY environment variable
             "model": "text-embedding-3-small",
             "dimensions": 1536,
             "base_url": "https://api.openai.com/v1",
             "timeout": 60
         },
         "cohere": {
-            "api_key": "",
+            "api_key": "",  # Must be set via COHERE_API_KEY environment variable
             "model": "embed-multilingual-v3.0",
             "input_type": "search_document",
             "truncate": "END",
             "timeout": 60
         },
         "huggingface": {
-            "api_token": "",
+            "api_token": "",  # Must be set via HUGGINGFACE_TOKEN environment variable
             "model": "sentence-transformers/all-MiniLM-L6-v2",
             "task": "feature-extraction",
             "wait_for_model": True,
@@ -129,7 +137,7 @@ class VectorIndexProviderConfig(BaseModel):
         },
         "qdrant": {
             "url": "http://localhost:6333",
-            "api_key": "",
+            "api_key": "",  # Must be set via QDRANT_API_KEY environment variable
             "collection": "rag_collection",
             "vector_size": 384,
             "distance": "Cosine",

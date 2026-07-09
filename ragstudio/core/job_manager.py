@@ -1,6 +1,7 @@
 """
 Job Management System with Cache, Resume, Fallback, Retry, and Checkpoint support
 Implements production-ready pipeline execution with fault tolerance
+Security: Uses JSON instead of pickle for safe serialization
 """
 import asyncio
 import json
@@ -9,10 +10,9 @@ import time
 from pathlib import Path
 from typing import Dict, Any, Optional, List, Callable
 from datetime import datetime, timedelta
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from enum import Enum
 import aiofiles
-import pickle
 
 from ragstudio.core.database.database import Database
 from ragstudio.core.logging_system import StructuredLogger
@@ -167,25 +167,35 @@ class CacheManager:
         
         async with aiofiles.open(cache_file, 'rb') as f:
             data = await f.read()
-            return pickle.loads(data)
+            try:
+                return json.loads(data.decode('utf-8'))
+            except json.JSONDecodeError as e:
+                # Corrupted cache file, delete it
+                await self.delete(key)
+                raise Exception(f"Cache file corrupted: {str(e)}")
     
     async def set(self, stage_name: str, input_data: Dict[str, Any], result: Any, ttl_hours: Optional[int] = None) -> str:
-        """Cache stage result"""
+        """Cache stage result using safe JSON serialization"""
         key = self._generate_key(stage_name, input_data)
         ttl = ttl_hours if ttl_hours is not None else self.default_ttl_hours
         
-        cache_file = self.cache_dir / f"{key}.pkl"
+        cache_file = self.cache_dir / f"{key}.json"
         
-        async with aiofiles.open(cache_file, 'wb') as f:
-            data = pickle.dumps(result)
-            await f.write(data)
+        # Convert result to JSON-serializable format
+        try:
+            json_data = json.dumps(result, default=str)
+        except (TypeError, ValueError) as e:
+            raise Exception(f"Cannot serialize result to JSON: {str(e)}")
+        
+        async with aiofiles.open(cache_file, 'w', encoding='utf-8') as f:
+            await f.write(json_data)
         
         entry = CacheEntry(
             key=key,
             data=None,
             created_at=datetime.now(),
             expires_at=datetime.now() + timedelta(hours=ttl),
-            size_bytes=len(data)
+            size_bytes=len(json_data.encode('utf-8'))
         )
         
         self._metadata[key] = entry
