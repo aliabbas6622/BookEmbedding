@@ -292,9 +292,11 @@ async def upload_document(
 @app.post("/api/v1/pipeline/start")
 async def start_pipeline(
     document_id: int = Query(..., description="Document ID to process"),
-    config: PipelineConfig = None
+    config: PipelineConfig = None,
+    enable_cache: bool = True,
+    enable_checkpoint: bool = True
 ):
-    """Start processing pipeline for a document"""
+    """Start processing pipeline for a document with production features"""
     if config is None:
         config = PipelineConfig()
     
@@ -303,71 +305,160 @@ async def start_pipeline(
     if not doc:
         raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
     
-    # Initialize orchestrator
-    orchestrator = PipelineOrchestrator(db=db)
+    # Initialize orchestrator with cache and checkpoint directories
+    from ragstudio.core.config.settings import CACHE_DIR, CHECKPOINT_DIR
+    
+    orchestrator = PipelineOrchestrator(
+        db=db,
+        cache_dir=CACHE_DIR,
+        checkpoint_dir=CHECKPOINT_DIR
+    )
     
     # Start pipeline
     try:
         pipeline_id = await orchestrator.run(
             document_id=document_id,
-            config=config.model_dump()
+            config=config.model_dump(),
+            enable_cache=enable_cache,
+            enable_checkpoint=enable_checkpoint
         )
         
         return {
             "pipeline_id": pipeline_id,
             "document_id": document_id,
             "status": "started",
-            "message": "Pipeline started successfully"
+            "message": "Pipeline started successfully",
+            "features": {
+                "cache_enabled": enable_cache,
+                "checkpoint_enabled": enable_checkpoint
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to start pipeline: {str(e)}")
 
-@app.get("/api/v1/pipeline/status/{pipeline_id}", response_model=PipelineStatusResponse)
-async def get_pipeline_status(pipeline_id: str):
-    """Get pipeline execution status"""
-    status = db.get_pipeline_session(pipeline_id)
+
+@app.post("/api/v1/pipeline/pause/{pipeline_id}")
+async def pause_pipeline(pipeline_id: str):
+    """Pause a running pipeline"""
+    from ragstudio.core.config.settings import CACHE_DIR, CHECKPOINT_DIR
     
-    if not status:
-        raise HTTPException(status_code=404, detail=f"Pipeline {pipeline_id} not found")
-    
-    # Calculate progress
-    total_stages = len(status.get("stage_order", []))
-    completed = len(status.get("completed_stages", []))
-    progress = (completed / total_stages * 100) if total_stages > 0 else 0
-    
-    return PipelineStatusResponse(
-        pipeline_id=pipeline_id,
-        document_id=status.get("document_id"),
-        status=status.get("status", "unknown"),
-        current_stage=status.get("current_stage"),
-        completed_stages=status.get("completed_stages", []),
-        failed_stage=status.get("failed_stage"),
-        error_message=status.get("error_message"),
-        progress_percentage=progress
+    orchestrator = PipelineOrchestrator(
+        db=db,
+        cache_dir=CACHE_DIR,
+        checkpoint_dir=CHECKPOINT_DIR
     )
+    
+    try:
+        success = await orchestrator.pause(pipeline_id)
+        if not success:
+            raise HTTPException(status_code=400, detail="Cannot pause pipeline - not in running state")
+        
+        return {
+            "pipeline_id": pipeline_id,
+            "status": "paused",
+            "message": "Pipeline paused successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to pause pipeline: {str(e)}")
+
 
 @app.post("/api/v1/pipeline/resume/{pipeline_id}")
 async def resume_pipeline(pipeline_id: str):
-    """Resume a failed or paused pipeline"""
-    status = db.get_pipeline_session(pipeline_id)
+    """Resume a failed or paused pipeline from last checkpoint"""
+    from ragstudio.core.config.settings import CACHE_DIR, CHECKPOINT_DIR
     
-    if not status:
-        raise HTTPException(status_code=404, detail=f"Pipeline {pipeline_id} not found")
-    
-    if status.get("status") not in ["failed", "paused"]:
-        raise HTTPException(status_code=400, detail=f"Cannot resume pipeline with status: {status.get('status')}")
-    
-    orchestrator = PipelineOrchestrator(db=db)
+    orchestrator = PipelineOrchestrator(
+        db=db,
+        cache_dir=CACHE_DIR,
+        checkpoint_dir=CHECKPOINT_DIR
+    )
     
     try:
         await orchestrator.resume(pipeline_id)
         return {
             "pipeline_id": pipeline_id,
             "status": "resumed",
-            "message": "Pipeline resumed successfully"
+            "message": "Pipeline resumed successfully from last checkpoint"
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to resume pipeline: {str(e)}")
+
+
+@app.post("/api/v1/pipeline/cancel/{pipeline_id}")
+async def cancel_pipeline(pipeline_id: str):
+    """Cancel a running pipeline"""
+    from ragstudio.core.config.settings import CACHE_DIR, CHECKPOINT_DIR
+    
+    orchestrator = PipelineOrchestrator(
+        db=db,
+        cache_dir=CACHE_DIR,
+        checkpoint_dir=CHECKPOINT_DIR
+    )
+    
+    try:
+        success = await orchestrator.cancel(pipeline_id)
+        if not success:
+            raise HTTPException(status_code=400, detail="Cannot cancel pipeline")
+        
+        return {
+            "pipeline_id": pipeline_id,
+            "status": "cancelled",
+            "message": "Pipeline cancelled successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to cancel pipeline: {str(e)}")
+
+
+@app.get("/api/v1/jobs/{job_id}/status")
+async def get_job_status(job_id: str):
+    """Get detailed job status with progress information"""
+    from ragstudio.core.config.settings import CACHE_DIR, CHECKPOINT_DIR
+    
+    orchestrator = PipelineOrchestrator(
+        db=db,
+        cache_dir=CACHE_DIR,
+        checkpoint_dir=CHECKPOINT_DIR
+    )
+    
+    status = orchestrator.get_job_status(job_id)
+    
+    if not status:
+        raise HTTPException(status_code=404, detail=f"Job {job_id} not found")
+    
+    return {
+        "job_id": job_id,
+        "status": status.get("status"),
+        "progress": status.get("progress", 0),
+        "current_stage": status.get("current_stage"),
+        "completed_stages": status.get("completed_stages", []),
+        "total_stages": status.get("total_stages", 0),
+        "retry_count": status.get("retry_count", 0),
+        "error_message": status.get("error_message"),
+        "created_at": status.get("created_at"),
+        "started_at": status.get("started_at"),
+        "completed_at": status.get("completed_at")
+    }
+
+
+@app.post("/api/v1/jobs/{job_id}/cache/clear")
+async def clear_job_cache(job_id: str):
+    """Clear cache for a specific job"""
+    from ragstudio.core.config.settings import CACHE_DIR, CHECKPOINT_DIR
+    
+    orchestrator = PipelineOrchestrator(
+        db=db,
+        cache_dir=CACHE_DIR,
+        checkpoint_dir=CHECKPOINT_DIR
+    )
+    
+    try:
+        await orchestrator.clear_cache(job_id)
+        return {
+            "job_id": job_id,
+            "message": "Cache cleared successfully"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear cache: {str(e)}")
 
 @app.post("/api/v1/rag/search", response_model=SearchResponse)
 async def search_documents(
